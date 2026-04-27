@@ -21,6 +21,8 @@ import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.security.SecureRandom;
+
 import com.BugBazaar.ui.addresses.AddressDatabaseHelper;
 import com.BugBazaar.ui.addresses.AddressItem;
 import com.BugBazaar.ui.cart.NotificationHelper;
@@ -51,6 +53,11 @@ public class OrderSummary extends AppCompatActivity {
     private int finalCost;  // Define finalCost as a class member
     private String newOrderID; // Declare newOrderID as a class member
     StringBuilder productnames = new StringBuilder();
+
+    // CSRF protection: Token for validating intents
+    private static final String CSRF_TOKEN_KEY = "order_summary_csrf_token";
+    private static final String CSRF_TOKEN_TIMESTAMP_KEY = "csrf_token_timestamp";
+    private static final long CSRF_TOKEN_VALIDITY_MS = 300000; // 5 minutes
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -120,6 +127,15 @@ public class OrderSummary extends AppCompatActivity {
 
 
         Intent intent = getIntent();
+
+        // CSRF Protection: Validate the intent contains a valid CSRF token
+        if (!validateCSRFToken(intent)) {
+            Log.e("OrderSummary", "Invalid or missing CSRF token in intent");
+            Toast.makeText(this, "Invalid request. Please try again from cart.", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
         int totalCost = intent.getIntExtra("totalPrice", 0);
         // Format the totalCost and set it in the TextView
         String formattedTotalCost = formatPrice(totalCost);
@@ -417,5 +433,103 @@ public class OrderSummary extends AppCompatActivity {
     // Code to handle back button
     public void onBackButtonClick(View view) {
         onBackPressed(); // Navigate back to the previous activity
+    }
+
+    /**
+     * Generates a cryptographically secure CSRF token for intent validation.
+     * This token should be included when creating intents to launch OrderSummary.
+     *
+     * @param context The application context
+     * @return A secure random token string
+     */
+    public static String generateCSRFToken(Context context) {
+        SecureRandom secureRandom = new SecureRandom();
+        byte[] tokenBytes = new byte[32];
+        secureRandom.nextBytes(tokenBytes);
+
+        StringBuilder token = new StringBuilder();
+        for (byte b : tokenBytes) {
+            token.append(String.format("%02x", b));
+        }
+
+        String csrfToken = token.toString();
+
+        // Store token and timestamp in SharedPreferences
+        SharedPreferences prefs = context.getSharedPreferences("OrderSummaryPrefs", Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putString(CSRF_TOKEN_KEY, csrfToken);
+        editor.putLong(CSRF_TOKEN_TIMESTAMP_KEY, System.currentTimeMillis());
+        editor.apply();
+
+        return csrfToken;
+    }
+
+    /**
+     * Validates that the intent contains a valid CSRF token that matches
+     * the stored token and is within the validity period.
+     *
+     * @param intent The intent to validate
+     * @return true if the token is valid, false otherwise
+     */
+    private boolean validateCSRFToken(Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+
+        String receivedToken = intent.getStringExtra("csrf_token");
+        if (receivedToken == null || receivedToken.isEmpty()) {
+            return false;
+        }
+
+        SharedPreferences prefs = getSharedPreferences("OrderSummaryPrefs", Context.MODE_PRIVATE);
+        String storedToken = prefs.getString(CSRF_TOKEN_KEY, null);
+        long tokenTimestamp = prefs.getLong(CSRF_TOKEN_TIMESTAMP_KEY, 0);
+
+        if (storedToken == null || storedToken.isEmpty()) {
+            return false;
+        }
+
+        // Check if token has expired
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - tokenTimestamp > CSRF_TOKEN_VALIDITY_MS) {
+            return false;
+        }
+
+        // Constant-time comparison to prevent timing attacks
+        boolean tokensMatch = constantTimeEquals(storedToken, receivedToken);
+
+        // Invalidate token after use (one-time use)
+        if (tokensMatch) {
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.remove(CSRF_TOKEN_KEY);
+            editor.remove(CSRF_TOKEN_TIMESTAMP_KEY);
+            editor.apply();
+        }
+
+        return tokensMatch;
+    }
+
+    /**
+     * Performs constant-time string comparison to prevent timing attacks.
+     *
+     * @param a First string to compare
+     * @param b Second string to compare
+     * @return true if strings are equal, false otherwise
+     */
+    private boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+
+        if (a.length() != b.length()) {
+            return false;
+        }
+
+        int result = 0;
+        for (int i = 0; i < a.length(); i++) {
+            result |= a.charAt(i) ^ b.charAt(i);
+        }
+
+        return result == 0;
     }
 }
