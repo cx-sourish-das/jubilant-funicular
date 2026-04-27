@@ -109,6 +109,9 @@ public class CartActivity extends BaseActivity implements CartAdapter.UpdateTota
                 // Perform the checkout action here
                 Intent intentz=new Intent(CartActivity.this, OrderSummary.class);
                 intentz.putExtra("totalPrice",totalCostq);
+                // Generate and include CSRF token for security
+                String csrfToken = OrderSummary.generateCSRFToken(CartActivity.this);
+                intentz.putExtra("csrf_token", csrfToken);
                 startActivity(intentz);
             }
         });
